@@ -1,0 +1,38 @@
+# Discord
+discord.py>=2.4.0
+
+# Database
+asyncpg>=0.29.0
+SQLAlchemy>=2.0
+alembic>=1.13.0
+pgvector>=0.2.5
+
+# Cache / Queue
+redis>=5.0.0
+arq>=0.25.0
+
+# HTTP Client
+httpx>=0.27.0
+
+# Config
+pydantic-settings>=2.0.0
+
+# AI / Tokens
+tiktoken>=0.7.0
+anthropic>=0.28.0
+
+# Admin Panel
+streamlit>=1.36.0
+
+# Metrics
+prometheus_client>=0.20.0
+
+# Crypto
+cryptography>=42.0.0
+
+# Files
+python-magic-bin>=0.4.14
+pdfplumber>=0.11.0
+
+# Utils
+python-dotenv>=1.0.0

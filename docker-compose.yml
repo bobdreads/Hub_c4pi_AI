@@ -1,0 +1,25 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: capybara_postgres
+    environment:
+      POSTGRES_USER: aibot
+      POSTGRES_PASSWORD: senha123
+      POSTGRES_DB: aihub
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: capybara_redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
