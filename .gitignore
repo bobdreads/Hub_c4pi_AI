@@ -1,0 +1,9 @@
+.env
+.env.dev
+.env.prod
+__pycache__/
+*.pyc
+/files/
+/logs/
+/backups/
+venv/
