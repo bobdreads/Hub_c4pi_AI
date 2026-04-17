@@ -6,6 +6,7 @@ from adapters.base import GenerationRequest
 from adapters.factory import AdapterFactory
 from services.generation import generation_service
 from utils.logging import get_logger
+from services.memory import memory_service
 
 
 log = get_logger("bot.cogs.generate")
@@ -25,12 +26,21 @@ class GenerateCog(commands.Cog):
         modelo: str = "openai/gpt-5.4-mini"
     ):
         await ctx.defer(ephemeral=False)
-        req = GenerationRequest(
+
+        # Monta request com histórico do banco
+        req, user_id, chat_id = await memory_service.build_request_with_history(
             prompt=prompt,
             model=modelo,
-            user_id=str(ctx.author.id),
+            discord_id=str(ctx.author.id),
+            username=ctx.author.display_name,
+            channel_id=str(ctx.channel_id),
         )
+
         result = await generation_service.run(req)
+
+        # Salva mensagens no banco
+        await memory_service.save(chat_id, user_id, prompt, result)
+
         await ctx.followup.send(f"**{ctx.author.display_name}:** {prompt}\n\n{result.content}")
 
     @discord.slash_command(name="imagem", description="Gera uma imagem")

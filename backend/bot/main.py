@@ -9,6 +9,8 @@ import discord  # noqa: E402
 from config import settings  # noqa: E402
 from utils.logging import get_logger  # noqa: E402
 
+from database.pool import create_pool, close_pool  # noqa: E402
+
 
 log = get_logger("bot.main")
 
@@ -22,9 +24,14 @@ class CapybaraBot(discord.Bot):
         super().__init__(intents=intents)
 
     async def on_ready(self):
+        await create_pool()
         log.info(f"Bot online como {self.user}")
         await self.sync_commands(guild_ids=[settings.discord_guild_id])
         log.info("Comandos slash sincronizados!")
+
+    async def close(self):                           # ← ADICIONA ESSE BLOCO
+        await close_pool()
+        await super().close()
 
     async def on_application_command_error(self, ctx, error):
         if isinstance(error, discord.ApplicationCommandError):
