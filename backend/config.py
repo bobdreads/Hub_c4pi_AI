@@ -1,7 +1,7 @@
 from pathlib import Path
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Raiz do projeto (duas pastas acima de backend/config.py)
 ROOT_DIR = Path.cwd()
 
 
@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # Discord
     discord_token: str
     discord_guild_id: int
+    authorized_user_ids: list[int] = []
 
     # Database
     database_url: str
@@ -37,6 +38,13 @@ class Settings(BaseSettings):
 
     # Streamlit
     streamlit_admin_pw_hash: str = ""
+
+    @field_validator("authorized_user_ids", mode="before")
+    @classmethod
+    def parse_ids(cls, v):
+        if isinstance(v, str):
+            return [int(i.strip()) for i in v.split(",") if i.strip()]
+        return v
 
 
 settings = Settings()
