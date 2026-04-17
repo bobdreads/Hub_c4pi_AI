@@ -1,11 +1,14 @@
-import sys
 import os
+import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+# isort: skip_file
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), ".."))
 
-import discord
-from config import settings
-from utils.logging import get_logger
+import discord  # noqa: E402
+from config import settings  # noqa: E402
+from utils.logging import get_logger  # noqa: E402
+
 
 log = get_logger("bot.main")
 
@@ -20,6 +23,8 @@ class CapybaraBot(discord.Bot):
 
     async def on_ready(self):
         log.info(f"Bot online como {self.user}")
+        await self.sync_commands(guild_ids=[settings.discord_guild_id])
+        log.info("Comandos slash sincronizados!")
 
     async def on_application_command_error(self, ctx, error):
         if isinstance(error, discord.ApplicationCommandError):
