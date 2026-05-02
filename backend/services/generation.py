@@ -20,12 +20,5 @@ class GenerationService:
         )
         return result
 
-    async def run_image(self, prompt: str, model: str = "dall-e-3") -> GenerationResult:
-        log.info(f"Iniciando geração de imagem: model={model}")
-        adapter = AdapterFactory.get(model)
-        result = await adapter.generate_image(prompt, model)
-        log.info(f"Imagem gerada: latency={result.latency_ms}ms")
-        return result
-
 
 generation_service = GenerationService()

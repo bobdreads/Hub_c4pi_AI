@@ -21,5 +21,3 @@ class GenerationResult:
     prompt_tokens: int = 0
     output_tokens: int = 0
     latency_ms: int = 0
-    media_url: Optional[str] = None
-    media_type: Optional[str] = None

@@ -43,20 +43,6 @@ class GenerateCog(commands.Cog):
 
         await ctx.followup.send(f"**{ctx.author.display_name}:** {prompt}\n\n{result.content}")
 
-    @discord.slash_command(name="imagem", description="Gera uma imagem")
-    @require_authorized
-    @rate_limit_check("imagem")
-    async def imagem(self, ctx: discord.ApplicationContext, prompt: str):
-        await ctx.defer(ephemeral=False)
-        result = await generation_service.run_image(prompt)
-        await ctx.followup.send(f"🎨 **{prompt}**\n{result.media_url}")
-
-    @discord.slash_command(name="audio", description="Gera um áudio")
-    @require_authorized
-    @rate_limit_check("audio")
-    async def audio(self, ctx: discord.ApplicationContext, prompt: str):
-        await ctx.respond("🎵 Geração de áudio em breve!", ephemeral=True)
-
     # ──── ADICIONA AQUI ────
     @discord.slash_command(name="modelos", description="Lista todos os modelos LLM disponíveis")
     async def modelos(self, ctx: discord.ApplicationContext):

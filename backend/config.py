@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     redis_cache_url: str
 
     # AI APIs
-    apifree_api_key: str
+    wavespeed_api_key: str
     anthropic_api_key: str = ""
     mureka_api_key: str = ""
 
