@@ -1,12 +1,12 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
-from bot.middleware.auth import require_authorized
-from bot.middleware.rate_limit import rate_limit_check
-from adapters.base import GenerationRequest
-from adapters.factory import AdapterFactory
-from services.generation import generation_service
+
+from services.generation import GenerationService
+from schemas.params import LLMParams, PARAM_PRESETS
+from utils.file_reader import process_attachment
 from utils.logging import get_logger
-from services.memory import memory_service
+from database.queries.users import get_user_params, get_or_create_chat
 
 
 log = get_logger("bot.cogs.generate")
@@ -16,52 +16,99 @@ class GenerateCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @discord.slash_command(name="msg", description="Gera uma resposta de texto")
-    @require_authorized
-    @rate_limit_check("llm")
+    @app_commands.command(name="msg", description="Envia uma mensagem para o LLM")
+    @app_commands.describe(
+        prompt="Sua mensagem ou pergunta",
+        arquivo="Imagem, PDF, TXT ou CSV para enviar junto",
+        modelo="Modelo a usar (opcional, sobrescreve o configurado)",
+        preset="Preset de parâmetros: preciso | normal | criativo | codigo | resumo",
+        temp="Temperatura 0.0–2.0 (opcional)",
+    )
     async def msg(
         self,
-        ctx: discord.ApplicationContext,
-        prompt: str,
-        modelo: str = "openai/gpt-5.4-mini"
+        interaction: discord.Interaction,
+        prompt:   str,
+        arquivo:  discord.Attachment = None,
+        modelo:   str = None,
+        preset:   str = None,
+        temp:     float = None,
     ):
-        await ctx.defer(ephemeral=False)
+        await interaction.response.defer()
 
-        # Monta request com histórico do banco
-        req, user_id, chat_id = await memory_service.build_request_with_history(
-            prompt=prompt,
-            model=modelo,
-            discord_id=str(ctx.author.id),
-            username=ctx.author.display_name,
-            channel_id=str(ctx.channel_id),
-        )
+        user_id = str(interaction.user.id)
+        guild_id = str(interaction.guild_id)
 
-        result = await generation_service.run(req)
+        # Carregar parâmetros salvos do usuário
+        params = await get_user_params(self.bot.db, user_id) or LLMParams()
 
-        # Salva mensagens no banco
-        await memory_service.save(chat_id, user_id, prompt, result)
+        # Aplicar preset se informado
+        if preset and preset in PARAM_PRESETS:
+            params = PARAM_PRESETS[preset].model_copy()
 
-        await ctx.followup.send(f"**{ctx.author.display_name}:** {prompt}\n\n{result.content}")
+        # Sobrescrever modelo e temp se informados no comando
+        if modelo:
+            params.model = modelo
+        if temp is not None:
+            params.temperature = temp
 
-    # ──── ADICIONA AQUI ────
-    @discord.slash_command(name="modelos", description="Lista todos os modelos LLM disponíveis")
-    async def modelos(self, ctx: discord.ApplicationContext):
+        # Processar arquivo anexado
+        files = []
+        if arquivo:
+            try:
+                data = await arquivo.read()
+                af = await process_attachment(arquivo.filename, data, arquivo.content_type)
+                files.append(af)
+            except ValueError as e:
+                await interaction.followup.send(f"❌ {e}", ephemeral=True)
+                return
+
+        # Pegar ou criar chat_id para este canal
+        chat_id = await get_or_create_chat(self.bot.db, user_id, guild_id,
+                                           str(interaction.channel_id), params.model)
+
+        # Rodar geração
+        svc = GenerationService(self.bot.db, self.bot.redis)
+        result = await svc.run(prompt, user_id, chat_id, params, files)
+
+        if not result.success:
+            await interaction.followup.send(f"❌ Erro: {result.error}", ephemeral=True)
+            return
+
+        # Formatar resposta
+        resposta = result.text
+        footer = (f"-# 🤖 `{result.model}` · "
+                  f"{result.total_tokens} tokens · "
+                  f"{result.latency_ms:.0f}ms")
+
+        # Discord tem limite de 2000 chars — dividir se necessário
+        if len(resposta) + len(footer) <= 1900:
+            await interaction.followup.send(resposta + "\n" + footer)
+        else:
+            # Manda em partes
+            chunks = [resposta[i:i+1900]
+                      for i in range(0, len(resposta), 1900)]
+            for i, chunk in enumerate(chunks):
+                suffix = ("\n" + footer) if i == len(chunks) - 1 else ""
+                await interaction.followup.send(chunk + suffix)
+
+    @app_commands.command(name="modelos", description="Lista todos os modelos disponíveis")
+    async def modelos(self, interaction: discord.Interaction):
+        from adapters.factory import AdapterFactory
         catalog = AdapterFactory.list_models()
 
         embed = discord.Embed(
             title="🤖 Modelos LLM Disponíveis",
-            description="Use o ID do modelo no comando `/msg`",
+            description="Use o ID no parâmetro `modelo` do `/msg`",
             color=0x01696f
         )
-
         for provider, models in catalog.items():
             value = "\n".join([f"`{mid}` — {desc}" for mid, desc in models])
             embed.add_field(name=f"**{provider}**", value=value, inline=False)
 
         embed.set_footer(
-            text="Padrão: openai/gpt-5.4-mini | Exemplo: /msg modelo:xai/grok-4 prompt:...")
-        await ctx.respond(embed=embed, ephemeral=True)
+            text="Exemplo: /msg prompt:Olá modelo:anthropic/claude-sonnet-4.6")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-def setup(bot):
-    bot.add_cog(GenerateCog(bot))
+async def setup(bot):
+    await bot.add_cog(GenerateCog(bot))
