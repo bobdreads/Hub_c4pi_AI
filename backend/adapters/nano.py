@@ -12,13 +12,10 @@ BASE_URL = "https://llm.wavespeed.ai/v1"
 _IMAGE_MIMES = {"image/png", "image/jpeg", "image/gif", "image/webp"}
 
 
-class NanoAdapter:
+class NanoAdapter(BaseAdapter):
     def __init__(self):
-        self.api_key = settings.wavespeed_api_key
-        self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        # Fallback caso dê algum problema, ele usa a master key
+        self.default_api_key = settings.wavespeed_api_key
 
     async def generate(self, req: GenerationRequest) -> GenerationResult:
         start = time.monotonic()
@@ -34,12 +31,22 @@ class NanoAdapter:
             "presence_penalty":  req.presence_penalty,
         }
 
+        # === A MAGIA ACONTECE AQUI ===
+        # Pegamos a chave do usuário que veio do banco de dados (se não tiver, usa a padrão)
+        current_api_key = req.api_key if getattr(
+            req, 'api_key', None) else self.default_api_key
+
+        headers = {
+            "Authorization": f"Bearer {current_api_key}",
+            "Content-Type": "application/json",
+        }
+
         try:
             async with httpx.AsyncClient(timeout=120) as client:
                 r = await client.post(
-                    f"{settings.apifree_base_url}/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {settings.apifree_api_key}"},
+                    # <-- Agora sim, usando a WAVESPEED!
+                    f"{BASE_URL}/chat/completions",
+                    headers=headers,                # <-- Agora sim, enviando a SUA CHAVE!
                     json=payload,
                 )
                 r.raise_for_status()
@@ -55,48 +62,47 @@ class NanoAdapter:
                 prompt_tokens=usage.get("prompt_tokens", 0),
                 output_tokens=usage.get("completion_tokens", 0),
                 latency_ms=latency,
+                success=True,
                 finish_reason=choice.get("finish_reason", "stop"),
             )
 
         except httpx.HTTPStatusError as e:
             log.error(
                 f"HTTP {e.response.status_code} na API: {e.response.text[:200]}")
-            return GenerationResult(error=f"Erro da API: HTTP {e.response.status_code}")
+            return GenerationResult(
+                text="", model=req.model, success=False,
+                error=f"Erro da API: HTTP {e.response.status_code}"
+            )
         except Exception as e:
             log.error(f"Erro inesperado: {e}")
-            return GenerationResult(error=str(e))
+            return GenerationResult(
+                text="", model=req.model, success=False, error=str(e)
+            )
 
     def _build_messages(self, req: GenerationRequest) -> list:
         messages = []
 
-        # System prompt
         if req.system:
             messages.append({"role": "system", "content": req.system})
 
-        # Histórico de conversa
         messages.extend(req.history)
 
-        # Mensagem atual — pode ter texto + arquivos
         user_content = self._build_user_content(req)
         messages.append({"role": "user", "content": user_content})
 
         return messages
 
     def _build_user_content(self, req: GenerationRequest):
-        """Monta o content do usuário: texto puro ou lista multimodal."""
         if not req.files:
-            return req.prompt  # simples, sem arquivos
+            return req.prompt
 
-        # Com arquivos: montar lista de parts
         parts = []
 
-        # Texto primeiro
         if req.prompt:
             parts.append({"type": "text", "text": req.prompt})
 
         for f in req.files:
             if f.mime_type in _IMAGE_MIMES:
-                # Imagem → image_url com base64
                 b64 = base64.b64encode(f.data).decode()
                 parts.append({
                     "type": "image_url",
@@ -105,7 +111,6 @@ class NanoAdapter:
                     }
                 })
             elif f.text_content:
-                # PDF/CSV/TXT → injetar como texto
                 parts.append({
                     "type": "text",
                     "text": f"\n--- Arquivo: {f.filename} ---\n{f.text_content}\n---"

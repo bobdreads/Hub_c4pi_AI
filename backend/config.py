@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     mureka_api_key: str = ""
 
+    # --- A CORREÇÃO ESTÁ AQUI ---
+    # Adicionamos as variáveis da APIFree como opcionais para o Pydantic parar de reclamar
+    apifree_base_url: str = "https://api.apifree.ai/v1"
+    apifree_api_key: str = ""
+
     # Security
     api_key_master: str
 

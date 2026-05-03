@@ -43,7 +43,12 @@ class CapybaraBot(discord.Bot):
 
 def main():
     bot = CapybaraBot()
-    extensions = ["bot.cogs.chat", "bot.cogs.config_cog", "bot.cogs.generate"]
+    extensions = ["bot.cogs.chat",
+                  "bot.cogs.config_cog",
+                  "bot.cogs.generate",
+                  "bot.cogs.memory"
+                  ]
+
     for ext in extensions:
         bot.load_extension(ext)
         log.info(f"Extensao carregada: {ext}")

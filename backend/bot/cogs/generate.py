@@ -1,13 +1,15 @@
 import discord
-from discord import app_commands
 from discord.ext import commands
+from discord.commands import slash_command, Option
 
 from services.generation import GenerationService
 from schemas.params import LLMParams, PARAM_PRESETS
 from utils.file_reader import process_attachment
 from utils.logging import get_logger
-from database.queries.users import get_user_params, get_or_create_chat
 
+from database.queries.users import get_user_params, get_api_key, get_or_create_user
+from database.queries.chats import get_or_create_chat
+from database.pool import get_pool
 
 log = get_logger("bot.cogs.generate")
 
@@ -16,42 +18,50 @@ class GenerateCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="msg", description="Envia uma mensagem para o LLM")
-    @app_commands.describe(
-        prompt="Sua mensagem ou pergunta",
-        arquivo="Imagem, PDF, TXT ou CSV para enviar junto",
-        modelo="Modelo a usar (opcional, sobrescreve o configurado)",
-        preset="Preset de parâmetros: preciso | normal | criativo | codigo | resumo",
-        temp="Temperatura 0.0–2.0 (opcional)",
-    )
+    @slash_command(name="msg", description="Envia uma mensagem para o LLM")
     async def msg(
         self,
-        interaction: discord.Interaction,
-        prompt:   str,
-        arquivo:  discord.Attachment = None,
-        modelo:   str = None,
-        preset:   str = None,
-        temp:     float = None,
+        ctx: discord.ApplicationContext,
+        prompt: Option(str, "Sua mensagem ou pergunta"),
+        arquivo: Option(
+            discord.Attachment, "Imagem, PDF, TXT ou CSV para enviar junto", required=False) = None,
+        modelo: Option(
+            str, "Modelo a usar (opcional, sobrescreve o configurado)", required=False) = None,
+        preset: Option(
+            str, "Preset de parâmetros: preciso | normal | criativo | codigo | resumo", required=False) = None,
+        temp: Option(float, "Temperatura 0.0–2.0 (opcional)",
+                     required=False) = None,
     ):
-        await interaction.response.defer()
+        await ctx.defer()
 
-        user_id = str(interaction.user.id)
-        guild_id = str(interaction.guild_id)
+        user_discord_id = str(ctx.author.id)
+        guild_id = str(ctx.guild_id)
 
-        # Carregar parâmetros salvos do usuário
-        params = await get_user_params(self.bot.db, user_id) or LLMParams()
+        pool = await get_pool()
 
-        # Aplicar preset se informado
+        # 1. Fazemos a tradução! Pegamos o seu UUID interno do banco de dados
+        user = await get_or_create_user(pool, user_discord_id, ctx.author.name)
+        user_uuid = str(user["id"])
+
+        try:
+            # Esses continuam precisando do Discord ID (estão configurados assim no banco)
+            api_key = await get_api_key(pool, user_discord_id)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            await ctx.respond(f"❌ Você precisa configurar sua API Key primeiro com `/config api_key`.", ephemeral=True)
+            return
+
+        params = await get_user_params(pool, user_discord_id) or LLMParams()
+
         if preset and preset in PARAM_PRESETS:
             params = PARAM_PRESETS[preset].model_copy()
 
-        # Sobrescrever modelo e temp se informados no comando
         if modelo:
             params.model = modelo
         if temp is not None:
             params.temperature = temp
 
-        # Processar arquivo anexado
         files = []
         if arquivo:
             try:
@@ -59,40 +69,41 @@ class GenerateCog(commands.Cog):
                 af = await process_attachment(arquivo.filename, data, arquivo.content_type)
                 files.append(af)
             except ValueError as e:
-                await interaction.followup.send(f"❌ {e}", ephemeral=True)
+                await ctx.respond(f"❌ {e}", ephemeral=True)
                 return
 
-        # Pegar ou criar chat_id para este canal
-        chat_id = await get_or_create_chat(self.bot.db, user_id, guild_id,
-                                           str(interaction.channel_id), params.model)
+        # 2. AQUI ESTÁ A CORREÇÃO! Passamos o user_uuid para a criação do chat
+        chat_id = await get_or_create_chat(pool, user_uuid, guild_id,
+                                           str(ctx.channel_id), params.model)
 
-        # Rodar geração
-        svc = GenerationService(self.bot.db, self.bot.redis)
-        result = await svc.run(prompt, user_id, chat_id, params, files)
+        svc = GenerationService(pool, None)
+
+        # O user_uuid também segue para a geração de memória
+        result = await svc.run(prompt, user_uuid, chat_id, params, api_key=api_key, files=files)
 
         if not result.success:
-            await interaction.followup.send(f"❌ Erro: {result.error}", ephemeral=True)
+            await ctx.respond(f"❌ Erro: {result.error}", ephemeral=True)
             return
 
-        # Formatar resposta
         resposta = result.text
         footer = (f"-# 🤖 `{result.model}` · "
                   f"{result.total_tokens} tokens · "
                   f"{result.latency_ms:.0f}ms")
 
-        # Discord tem limite de 2000 chars — dividir se necessário
         if len(resposta) + len(footer) <= 1900:
-            await interaction.followup.send(resposta + "\n" + footer)
+            await ctx.respond(resposta + "\n" + footer)
         else:
-            # Manda em partes
             chunks = [resposta[i:i+1900]
                       for i in range(0, len(resposta), 1900)]
             for i, chunk in enumerate(chunks):
                 suffix = ("\n" + footer) if i == len(chunks) - 1 else ""
-                await interaction.followup.send(chunk + suffix)
+                if i == 0:
+                    await ctx.respond(chunk + suffix)
+                else:
+                    await ctx.send(chunk + suffix)
 
-    @app_commands.command(name="modelos", description="Lista todos os modelos disponíveis")
-    async def modelos(self, interaction: discord.Interaction):
+    @slash_command(name="modelos", description="Lista todos os modelos disponíveis")
+    async def modelos(self, ctx: discord.ApplicationContext):
         from adapters.factory import AdapterFactory
         catalog = AdapterFactory.list_models()
 
@@ -107,8 +118,8 @@ class GenerateCog(commands.Cog):
 
         embed.set_footer(
             text="Exemplo: /msg prompt:Olá modelo:anthropic/claude-sonnet-4.6")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await ctx.respond(embed=embed, ephemeral=True)
 
 
-async def setup(bot):
-    await bot.add_cog(GenerateCog(bot))
+def setup(bot):
+    bot.add_cog(GenerateCog(bot))

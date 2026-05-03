@@ -1,5 +1,6 @@
 import json
 from schemas.params import LLMParams
+from utils.crypto import decrypt
 
 
 async def get_user_params(db, user_id: str) -> LLMParams | None:
@@ -57,3 +58,47 @@ async def get_or_create_chat(db, user_id: str, guild_id: str,
         user_id, guild_id, channel_id, model
     )
     return str(row["id"])
+
+
+async def get_or_create_user(db, discord_id: str, username: str = "User") -> dict:
+    """
+    Busca o usuário pelo discord_id. Se não existir, cria um novo na tabela users.
+    Retorna o registro do banco contendo o 'id' (UUID).
+    """
+    # Tenta buscar o usuário existente
+    user = await db.fetchrow(
+        "SELECT id, discord_id, username FROM users WHERE discord_id = $1",
+        str(discord_id)
+    )
+
+    if user:
+        return user
+
+    # Se não existir, cria um novo
+    new_user = await db.fetchrow(
+        """
+        INSERT INTO users (discord_id, username)
+        VALUES ($1, $2)
+        RETURNING id, discord_id, username
+        """,
+        str(discord_id), username
+    )
+
+    return new_user
+
+
+async def get_api_key(db, discord_id: str) -> str:
+    """Busca a API Key criptografada do usuário e a descriptografa."""
+    # Como a sua criptografia junta o IV e a chave numa string só,
+    # presumimos que a coluna no banco se chama api_key_enc
+    row = await db.fetchrow(
+        "SELECT api_key_enc FROM users WHERE discord_id = $1",
+        str(discord_id)
+    )
+
+    if not row or not row.get("api_key_enc"):
+        raise ValueError(
+            "API Key não configurada no banco. Use `/config api_key`")
+
+    # Usa o seu método decrypt passando a string única
+    return decrypt(row["api_key_enc"])

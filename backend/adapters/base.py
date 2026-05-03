@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Optional
 from abc import ABC, abstractmethod
-from schemas.response import GenerationResult
 
 
 @dataclass
@@ -27,6 +26,22 @@ class GenerationRequest:
     files:        list = field(default_factory=list)  # lista de AttachedFile
     user_id:      Optional[str] = None
     chat_id:      Optional[str] = None
+    api_key:      Optional[str] = None
+
+# === AQUI ESTÁ A CORREÇÃO MÁGICA ===
+
+
+@dataclass
+class GenerationResult:
+    text: str                       # Trocamos 'content' por 'text'
+    model: str
+    prompt_tokens: int = 0
+    output_tokens: int = 0
+    latency_ms: float = 0.0
+    success: bool = True            # Adicionamos a flag de sucesso
+    # Adicionamos o campo de erro (caso precise)
+    error: Optional[str] = None
+    finish_reason: str = "stop"     # Adicionamos o motivo da finalização
 
 
 class BaseAdapter(ABC):
@@ -36,12 +51,3 @@ class BaseAdapter(ABC):
 
     async def health_check(self) -> bool:
         return True
-
-
-@dataclass
-class GenerationResult:
-    content: str
-    model: str
-    prompt_tokens: int = 0
-    output_tokens: int = 0
-    latency_ms: int = 0
